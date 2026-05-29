@@ -1,6 +1,6 @@
 # SimpleAgent
 
-一个基于 [LangChain](https://github.com/langchain-ai/langchain) / [LangGraph](https://github.com/langchain-ai/langgraph) 构建的 **深度 AI Agent**，支持多模型切换、子 Agent 委派、长期记忆、MCP 工具协议和终端交互界面。
+一个基于 [LangChain](https://github.com/langchain-ai/langchain) / [LangGraph](https://github.com/langchain-ai/langgraph) 构建的 **深度 AI Agent**，支持 TUI 终端交互、多模型切换、Skills 技能机制、子 Agent 委派、长期记忆和 MCP 工具协议。
 
 ---
 
@@ -34,7 +34,7 @@
 ### 安全防护
 
 - **Prompt 注入防护** — 检测并阻断 "ignore previous instructions" 等 10+ 种注入模式
-- **PII 双向检测** — 输入/输出端均检测手机号、身份证、银行卡、API Key 等敏感信息并自动拦截
+- **PII 多层检测** — PIIMiddleware 对 API Key 做输入/输出双向阻断；GuardMiddleware 在输出端正则扫描手机号、身份证、银行卡
 - **HITL 中断确认** — 对写文件、编辑、执行命令、删除文件等危险操作弹出人工确认面板
 
 ### 工程化
@@ -143,11 +143,11 @@ python deep_agent.py
 
 ### 模型切换
 
-````text
+```text
 # models.yaml 中配置的模型均可在运行时切换
-/models.yaml            # 列出可用模型
+/model                  # 列出当前模型和所有可用模型
 /model <model-name>     # 切换到指定模型
-````
+```
 
 ---
 
@@ -159,8 +159,10 @@ SimpleAgent/
 ├── deep_agent.py            # Agent 核心逻辑
 ├── models.yaml              # 模型配置
 ├── models/                  # 模型注册中心
-│   └── model_registry.py
+│   ├── model_registry.py    # 模型注册中心（YAML 驱动、懒加载）
+│   └── models.py            # 旧版模型定义（便捷实例）
 ├── tui/                     # 终端 UI
+│   ├── __init__.py
 │   └── chat_tui.py          # Rich + prompt_toolkit 界面
 ├── memory/                  # 长期记忆
 │   ├── memory_store.py      # remember / recall / forget 工具
@@ -168,20 +170,27 @@ SimpleAgent/
 │   └── chroma_db/           # ChromaDB 持久化目录
 ├── middleware/               # 中间件
 │   ├── memory_middleware.py  # MemoryMiddleware + PIIMiddleware
-│   └── guard_middleware.py   # 操作守卫
+│   └── guard_middleware.py   # GuardMiddleware（注入防护 + PII 检测 + 画像注入 + 任务规划）
 ├── tools/                   # 工具模块
+│   ├── __init__.py
 │   ├── subagent_tool.py     # 子 Agent 管理工具
 │   └── tool_wrapper.py      # 工具重试包装器
 ├── mcp/                     # MCP 工具协议
-│   ├── calc_server.py       # MCP 数学工具服务器
-│   └── tools.py             # 额外工具（网络搜索等）
+│   ├── calc_server.py       # MCP 计算工具服务器
+│   └── tools.py             # Tavily 网络搜索工具
 ├── skills/                  # Agent 技能
 │   ├── file-search/         # 文件搜索技能
 │   ├── prompt-optimizer/    # 问题理解与优化技能
-│   └── edit/                # 编辑技能
+│   └── edit/                # 编辑技能（预留）
 ├── prompt/                  # 系统提示词
+│   ├── prompts.py           # 提示词加载器
+│   └── system_prompt.md     # 系统提示词模板
 ├── traces/                  # 执行追踪日志
+│   ├── tracer.py            # JSONL 回调追踪器
+│   └── trace.jsonl          # 追踪数据文件
 ├── tests/                   # 测试
+├── temp/                    # 临时文件
+├── large_tool_results/      # 大型工具结果
 └── .deepagent/              # Agent 运行时目录
     ├── AGENTS.md            # 项目级 Agent 配置
     └── subagents/           # 持久化子 Agent 配置
@@ -225,7 +234,7 @@ Skills 是 Agent 的可插拔能力模块。每个 Skill 包含一个 `SKILL.md`
 | ---- | ---- | ---- |
 | `file-search` | `/file-search <keyword>` | 在用户主目录递归搜索文件名包含关键词的文件 |
 | `prompt-optimizer` | `/prompt-optimizer` | 深度理解用户意图，执行「问题解构 → 意图对齐 → 回答构建 → 质量自检」四阶段优化 |
-| `edit` | `/edit` | 编辑文件内容 |
+| `edit` | `/edit` | 编辑文件（预留，尚未实现） |
 
 ### 添加自定义技能
 
@@ -264,7 +273,11 @@ argument-hint: "[keyword]"
 
 ## 中间件
 
-Agent 通过中间件层实现横切关注点，处理流程为：`输入 → MemoryMiddleware → GuardMiddleware → 模型 → GuardMiddleware → PIIMiddleware → 输出`。
+Agent 通过中间件层实现横切关注点。中间件注册顺序为 `[GuardMiddleware, MemoryMiddleware, PIIMiddleware]`，`abefore_model` 按正序、`aafter_model` 按反序执行：
+
+```text
+输入 → GuardMiddleware → MemoryMiddleware → PIIMiddleware → 模型 → PIIMiddleware → MemoryMiddleware → GuardMiddleware → 输出
+```
 
 ### GuardMiddleware（核心安全守卫）
 
