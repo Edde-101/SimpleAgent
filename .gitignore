@@ -1,0 +1,32 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+
+# Environment variables (contains API keys)
+.env
+
+# ChromaDB runtime data
+memory/chroma_db/
+
+# Trace logs (may contain sensitive request data)
+traces/trace.jsonl
+
+# Large tool results
+large_tool_results/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temporary files
+temp/
+*.tmp
