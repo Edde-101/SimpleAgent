@@ -1,0 +1,40 @@
+default: openai_compatible
+
+models:
+  deepseek:
+    provider: deepseek
+    model: deepseek-v4-pro
+    api_key: ${DEEPSEEK_KEY}
+    base_url: ${DEEPSEEK_URL}
+    thinking:
+      type: enabled
+    reasoning_effort: high
+
+  claude:
+    provider: anthropic
+    model: claude-opus-4-7
+    api_key: ${ANTHROPIC_KEY}
+
+  openai:
+    provider: openai
+    model: gpt-4o
+    api_key: ${OPENAI_KEY}
+
+  local:
+    provider: ollama
+    model: qwen2.5:14b
+    base_url: http://localhost:11434/v1
+
+  openai_compatible:
+    provider: openai_compatible
+    model: qwen-plus
+    base_url: ${ALI_URL}
+    api_key: ${ALI_KEY}
+
+models_embedding:
+  default: openai
+  openai:
+    provider: openai
+    model: BAAI/bge-large-zh-v1.5
+    api_key: ${EMBEDDING_KEY}
+    base_url: ${EMBEDDING_URL}
