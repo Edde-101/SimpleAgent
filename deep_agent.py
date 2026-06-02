@@ -1,10 +1,6 @@
 import asyncio
 import os
 from deepagents import create_deep_agent
-
-# from models.models import embeddings
-
-# from models.models import model
 from middleware.memory_middleware import memory_middleware, pii_middleware
 from prompt.prompts import Assistant_PROMPT
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -36,20 +32,28 @@ class Agent:
             "edit_file": True,
             "execute": True,
             "delete_file": True,
+            "install_skill": True,
         }
 
     async def get_mcp_tools(self):
 
         python_exe = os.path.join(project_dir, "venv", "Scripts", "python.exe")
-        server_script = os.path.join(base_dir, "mcp", "calc_server.py")
-        print(f"[MCP] 启动服务器: {python_exe} {server_script}")
+        server_script1 = os.path.join(base_dir, "mcp", "general_server.py")
+
+        server_script2 = os.path.join(base_dir, "mcp", "skill_manager_server.py")
+        print(f"[MCP] 启动服务器: {python_exe} {server_script1} {server_script2}")
         client = MultiServerMCPClient(
             {
-                "math": {
+                "general": {
                     "transport": "stdio",
                     "command": python_exe,
-                    "args": [server_script],
-                }
+                    "args": [server_script1],
+                },
+                "skill_manager": {
+                    "transport": "stdio",
+                    "command": python_exe,
+                    "args": [server_script2],
+                },
             }
         )
         try:
@@ -70,7 +74,7 @@ class Agent:
             model=self.model,
             embeddings=registry.get_embedding(),  # 从 models.py 导入
             python_exe=os.path.join(project_dir, "venv", "Scripts", "python.exe"),
-            server_script=os.path.join(base_dir, "mcp", "calc_server.py"),
+            server_script=os.path.join(base_dir, "mcp", "general_server.py"),
             chroma_dir=os.path.join(base_dir, "memory", "chroma_db"),
         )
         checker.print_report()

@@ -1,0 +1,15 @@
+<!-- modern theme for svg-draw-pro -->
+<defs>
+  <style>
+    :root {
+      --primary: #4F46E5;
+      --success: #10B981;
+      --warn: #F59E0B;
+      --text: #1E293B;
+      --border: #E2E8F0;
+      --bg: #F8FAFC;
+      --radius: 12px;
+      --shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    }
+  </style>
+</defs>

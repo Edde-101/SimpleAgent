@@ -19,24 +19,19 @@ _parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 
-from ..models.model_registry import registry
-from rich.console import Console, Group as RichGroup
+from SimpleAgent.models.model_registry import registry
+from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.live import Live
 from rich.text import Text
-from rich.spinner import Spinner
 from rich.box import MINIMAL, ROUNDED
 from rich.theme import Theme
-from rich.align import Align
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style as PTStyle
-from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-import re
-from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 
 from deep_agent import Agent
@@ -73,79 +68,46 @@ PT_STYLE = PTStyle.from_dict(
 COMMANDS = ["/help", "/exit", "/quit", "/clear", "/model", "/history", "/save"]
 HISTORY_FILE = Path.home() / ".deep_agent_history"
 
+
+class CommandCompleter(Completer):
+    """只在输入 / 时触发指令补全，其他情况不提示"""
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        # 找到最后一个 / 的位置，检查它是否是一个"词"的起始
+        idx = text.rfind("/")
+        if idx == -1:
+            return
+        word = text[idx:]
+        # 确保 / 是词的起始（前面是空白或行首）
+        if idx > 0 and text[idx - 1] not in (" ", "\n", "\t"):
+            return
+        for cmd in COMMANDS:
+            if cmd.startswith(word):
+                yield Completion(cmd, start_position=-len(word))
+
 # ═══════════════════════════════════════════
 # UI 组件
 # ═══════════════════════════════════════════
 
 
-def _truncate(text: str, max_chars: int = 600, tail_lines: int = 8) -> str:
-    """截断文本：优先保留尾部"""
-    if len(text) <= max_chars:
-        return text
-    lines = text.split("\n")
-    if len(lines) > tail_lines:
-        return f"...(省略 {len(lines) - tail_lines} 行)...\n" + "\n".join(
-            lines[-tail_lines:]
-        )
-    return text[-max_chars:]
-
-
 def build_welcome() -> Panel:
     """欢迎界面"""
-    inner = []
-    inner.append("\n")
-    logo = Text("◈ Simple Agent TUI ◈", style="bold bright_white")
-    inner.append(Align.center(logo))
-    commands = [
+    body = Text()
+    body.append("\n")
+    body.append("◈ Simple Agent TUI ◈\n", style="bold bright_white")
+    body.append("\n")
+    for cmd, desc in [
         ("/help   ", "帮助    "),
         ("/clear  ", "清屏    "),
         ("/model  ", "切换模型"),
         ("/save   ", "保存对话"),
         ("/exit   ", "退出    "),
         ("/history", "历史\n"),
-    ]
-    for cmd, desc in commands:
-        line = Text()
-        line.append(f"  {cmd}", style="dim")
-        line.append(desc)
-        inner.append(line)
-    # inner.append(Text("  Enter     ", style="bold yellow"))
-    # inner.append(" 发送消息  ")
-    # inner.append(Text("  Alt+Enter", style="bold yellow"))
-    # inner.append(" 换行      ")
-    # inner.append(Text("  Ctrl+C   ", style="bold yellow"))
-    # inner.append(" 中断生成\n")
-    return Panel(RichGroup(*inner), box=ROUNDED, border_style="welcome")
-
-
-def build_thinking_panel(
-    content: str, is_active: bool = False, full: bool = False
-) -> Panel:
-    """思考中面板
-
-    Args:
-        content: 思考文本内容
-        is_active: 是否仍在思考中（显示 spinner）
-        full: 是否显示完整内容（False 时截断至 800 字符用于流式）
-    """
-    if not content:
-        if is_active:
-            return Panel(
-                Spinner("dots", text=" 思考中…", style="thinking"),
-                border_style="dim cyan",
-                box=MINIMAL,
-                padding=(0, 2),
-            )
-        return None
-    display = content if full else _truncate(content, 800)
-    return Panel(
-        Text(display, style="thinking"),
-        title="💭 思考",
-        title_align="left",
-        border_style="dim cyan",
-        box=MINIMAL,
-        padding=(0, 2),
-    )
+    ]:
+        body.append(f"  {cmd}", style="dim")
+        body.append(f"{desc}\n")
+    return Panel(body, box=ROUNDED, border_style="welcome")
 
 
 def build_tool_panel(name: str, args: str, result: str = "") -> Panel:
@@ -193,18 +155,6 @@ def build_interrupt_panel(name: str, args: str) -> Panel:
     )
 
 
-def build_streaming_answer(text: str) -> Panel:
-    """流式回答面板（纯文本，未渲染 Markdown）"""
-    return Panel(
-        Text(_truncate(text, 2000), style="answer"),
-        title="🤖 回答",
-        title_align="left",
-        border_style="bright_white",
-        box=MINIMAL,
-        padding=(0, 2),
-    )
-
-
 # ═══════════════════════════════════════════
 # 主 TUI 类
 # ═══════════════════════════════════════════
@@ -235,10 +185,7 @@ class TUIChat:
 
         return PromptSession(
             history=FileHistory(str(HISTORY_FILE)),
-            auto_suggest=AutoSuggestFromHistory(),
-            completer=WordCompleter(
-                COMMANDS, ignore_case=True, pattern=re.compile(r"/\S*")
-            ),
+            completer=CommandCompleter(),
             key_bindings=bindings,
             style=PT_STYLE,
             multiline=True,
@@ -311,11 +258,11 @@ class TUIChat:
         while True:
             try:
                 user_input = await self.session.prompt_async(
-                    HTML("<prompt>▸</prompt> "),  # Claude CLI 风格的 ▸ 提示符
+                    HTML("<prompt>▸</prompt> "),
                 )
             except KeyboardInterrupt:
-                console.print("\n\n[info]👋 再见！[/]\n")
-                return
+                console.print("\n[info]输入 /exit 退出程序[/]\n")
+                continue
             except EOFError:
                 console.print("\n\n[info]👋 再见！[/]\n")
                 return
@@ -339,13 +286,16 @@ class TUIChat:
             # 流式获取并渲染回复
             try:
                 await self._stream_response(user_input)
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError):
                 console.print("\n[info]⏹ 已中断[/]\n")
             except Exception:
                 import traceback
 
-                console.print(f"\n[error]❌ 生成出错[/]\n")
-                console.print(f"[dim]{traceback.format_exc()}[/]\n")
+                console.print("\n[error]❌ 生成出错[/]\n")
+                from rich.markup import escape
+
+                console.print(escape(traceback.format_exc()), style="dim")
+                console.print()
 
     async def _handle_command(self, cmd: str) -> bool:
         """处理 / 命令。返回 True 表示应退出。"""
@@ -459,17 +409,22 @@ class TUIChat:
     # ── 流式响应核心 ──
 
     async def _stream_response(self, user_input: str):
-        """流式获取 Agent 回复并实时渲染，支持 HITL 中断确认
-        Live 内只渲染思考+工具面板
-        答案只在 Live 退出后用 console.print(Markdown(...)) 渲染一次
+        """流式获取 Agent 回复并实时渲染
+
+        - 思考：流式 dim 输出
+        - 答案：打字机流式 → ANSI 回退 → Markdown 原地重渲染，无重复
         """
         thinking_text = ""
         answer_text = ""
-        tool_calls: list[dict] = []  # [{id, name, args, result}, ...]
+        tool_calls: list[dict] = []
+        thinking_header_printed = False
+        answer_header_printed = False
+        in_thinking = False
+        cursor_saved = False
 
         current_input = {"messages": [{"role": "user", "content": user_input}]}
 
-        with Live(auto_refresh=False, console=console, transient=True) as live:
+        try:
             while True:
                 async for token, metadata in self.agent.assistant_agent.astream(
                     current_input,
@@ -481,27 +436,52 @@ class TUIChat:
                 ):
                     node = metadata.get("langgraph_node")
 
-                    # ── 模型节点：思考 / 回答 / tool_call 声明 ──
                     if node == "model":
-                        # 思考内容
+                        # ── 思考（流式）──
                         reasoning = (token.additional_kwargs or {}).get(
                             "reasoning_content", ""
                         ) or ""
                         if reasoning:
+                            if not thinking_header_printed:
+                                console.print()
+                                console.print("▌💭 思考中", style="bold dim cyan")
+                                console.print()
+                                thinking_header_printed = True
+                                in_thinking = True
                             thinking_text += reasoning
+                            console.print(reasoning, end="", style="thinking")
 
-                        # 回答内容（兼容 str / list 两种 content 类型）
+                        # ── 答案（打字机流式 + 累积）──
                         if token.content:
+                            content_piece = ""
                             if isinstance(token.content, str):
-                                answer_text += token.content
+                                content_piece = token.content
                             elif isinstance(token.content, list):
                                 for block in token.content:
                                     if isinstance(block, dict):
-                                        answer_text += block.get("text", "")
+                                        content_piece += block.get("text", "")
                                     else:
-                                        answer_text += str(block)
+                                        content_piece += str(block)
+                            if content_piece:
+                                if not answer_header_printed:
+                                    if in_thinking:
+                                        console.print()
+                                        console.print()
+                                    # 在打印答案头之前保存光标
+                                    console.file.write("\033[s")
+                                    console.file.flush()
+                                    cursor_saved = True
+                                    console.print()
+                                    console.print(
+                                        "▌🤖 回答", style="bold bright_white"
+                                    )
+                                    console.print()
+                                    answer_header_printed = True
+                                    in_thinking = False
+                                answer_text += content_piece
+                                console.print(content_piece, end="")
 
-                        # 工具调用声明 (流式 chunk)
+                        # ── 工具调用 ──
                         tc_chunks = (token.additional_kwargs or {}).get(
                             "tool_calls", []
                         )
@@ -524,11 +504,9 @@ class TUIChat:
                                     or candidate["id"] == tc_id
                                 ):
                                     existing = candidate
-
                             if existing is None:
                                 existing = {"id": "", "name": "", "args": ""}
                                 tool_calls.append(existing)
-
                             if tc_id:
                                 existing["id"] = tc_id
                             if func.get("name"):
@@ -536,7 +514,6 @@ class TUIChat:
                             if func.get("arguments"):
                                 existing["args"] += func["arguments"]
 
-                    # ── 工具节点：执行结果 ──
                     elif node == "tools":
                         tc_id = getattr(token, "tool_call_id", "")
                         tc_content = getattr(token, "content", "")
@@ -546,73 +523,50 @@ class TUIChat:
                                     tc["result"] = tc_content[:500]
                                     break
 
-                    # ── 构建 Live 显示 ──
-                    panels = []
-
-                    if thinking_text:
-                        tp = build_thinking_panel(thinking_text, is_active=True)
-                        if tp:
-                            panels.append(tp)
-
-                    for tc in tool_calls:
-                        if tc.get("name"):
-                            panels.append(
-                                build_tool_panel(
-                                    tc["name"], tc.get("args", ""), tc.get("result", "")
-                                )
-                            )
-
-                    if not thinking_text and answer_text:
-                        panels.append(build_streaming_answer(answer_text))
-                    elif not thinking_text and not answer_text and not tool_calls:
-                        panels.append(
-                            Panel(
-                                Text("生成中…", style="dim"),
-                                border_style="dim",
-                                box=MINIMAL,
-                                padding=(0, 2),
-                            )
-                        )
-
-                    if panels:
-                        live.update(RichGroup(*panels))
-                        live.refresh()
-
-                # ── 流结束：检查中断 ──
+                # ── 一轮 stream 结束 ──
                 interrupt_data = self._check_interrupt()
                 if not interrupt_data:
                     break
 
-                live.stop()
                 decisions = self._handle_interrupt(interrupt_data)
-                live.start()
+                thinking_text = ""
+                answer_text = ""
+                tool_calls = []
+                thinking_header_printed = False
+                answer_header_printed = False
+                in_thinking = False
+                cursor_saved = False
                 current_input = Command(resume={"decisions": decisions})
 
-        # ═══════════════════════════════
-        # 流结束 — 最终格式化渲染
-        # ═══════════════════════════════
+        finally:
+            pass
 
-        if thinking_text:
-            tp = build_thinking_panel(thinking_text, full=True)
-            if tp:
-                console.print(tp)
+        # ── ANSI 回退 → Markdown 重渲染 ──
+        if cursor_saved and answer_text:
+            console.file.write("\033[u")  # 回到答案区起点
+            console.file.write("\033[J")  # 清至屏底
+            console.file.flush()
+        if answer_text:
+            console.print()
+            console.print("▌🤖 回答", style="bold bright_white")
+            console.print()
+            console.print(Markdown(answer_text))
 
+        # ── 工具调用面板 ──
         for tc in tool_calls:
             if tc.get("name"):
+                console.print()
                 console.print(
                     build_tool_panel(
                         tc["name"], tc.get("args", ""), tc.get("result", "")
                     )
                 )
 
-        if answer_text.strip():
-            console.print(Markdown(answer_text.strip()))
-        else:
+        if not thinking_text and not answer_text and not tool_calls:
             console.print("[dim](无输出)[/]")
 
         console.print()
 
-        # 记录（含工具调用）
         self.conversation_log.append(
             {
                 "time": datetime.now().isoformat(),
@@ -630,11 +584,6 @@ class TUIChat:
                 ],
             }
         )
-
-
-# ═══════════════════════════════════════════
-# 入口
-# ═══════════════════════════════════════════
 
 
 async def tui_main():

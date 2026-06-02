@@ -1,0 +1,34 @@
+{
+  "nodes": [
+    {
+      "title": "User Request",
+      "desc": "Natural language instruction (e.g., \"Find latest React docs\", \"Convert SVG to PNG\")",
+      "icon": "💬",
+      "status": "success"
+    },
+    {
+      "title": "Skill Lookup",
+      "desc": "Search local skills (`list_installed_skills`) or remote (`search_skills`) using keywords & context",
+      "icon": "🔍",
+      "status": "success"
+    },
+    {
+      "title": "Load & Validate",
+      "desc": "Read `SKILL.md`, check dependencies, verify tool access, validate input schema",
+      "icon": "📄",
+      "status": "success"
+    },
+    {
+      "title": "Execute",
+      "desc": "Run skill script with user inputs; handle errors, timeouts, sandbox limits",
+      "icon": "⚙️",
+      "status": "success"
+    },
+    {
+      "title": "Return Result",
+      "desc": "Structured output (text, file path, JSON) sent to user or main agent for synthesis",
+      "icon": "📤",
+      "status": "success"
+    }
+  ]
+}

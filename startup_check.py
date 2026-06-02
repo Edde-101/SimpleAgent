@@ -45,7 +45,7 @@ class StartupChecker:
             if vec and len(vec) > 0:
                 return CheckResult("Embedding", Status.PASS, f"维度={len(vec)}")
         except Exception as e:
-            return CheckResult("Embedding", Status.FAIL, str(e)[:100])
+            return CheckResult("Embedding", Status.WARN, f"不可用（不影响对话）- {str(e)[:80]}")
 
     async def check_mcp(self, python_exe: str, server_script: str) -> CheckResult:
         """检查 MCP 服务器文件"""

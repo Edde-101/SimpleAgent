@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 # 创建一个 MCP 服务器
-mcp = FastMCP("我的mcp服务")
+mcp = FastMCP("General Server")
 
 tavily_client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
 

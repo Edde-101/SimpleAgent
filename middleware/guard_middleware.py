@@ -109,8 +109,11 @@ class GuardMiddleware(AgentMiddleware):
                 )
                 return None
 
-        # 用户偏好
-        relevant = vector_store.similarity_search(content, k=3)
+        # 用户偏好（embedding 服务不可用时跳过，不影响主流程）
+        try:
+            relevant = vector_store.similarity_search(content, k=3)
+        except Exception:
+            relevant = []
         preferences = vector_store.get(where={"category": "user_preference"})
         profile_text = build_profile_text(relevant, preferences)
 
