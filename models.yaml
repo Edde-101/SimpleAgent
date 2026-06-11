@@ -1,4 +1,4 @@
-default: openai_compatible
+default: deepseek
 
 models:
   deepseek:
@@ -9,6 +9,8 @@ models:
     thinking:
       type: enabled
     reasoning_effort: high
+    stream_options:
+      include_usage: True
 
   claude:
     provider: anthropic

@@ -36,6 +36,7 @@ from prompt_toolkit.formatted_text import HTML
 
 from deep_agent import Agent
 from langgraph.types import Command
+from rich.live import Live
 
 # ═══════════════════════════════════════════
 # 主题 & 样式
@@ -65,7 +66,20 @@ PT_STYLE = PTStyle.from_dict(
     }
 )
 
-COMMANDS = ["/help", "/exit", "/quit", "/clear", "/model", "/history", "/save"]
+COMMANDS = [
+    "/help",
+    "/exit",
+    "/quit",
+    "/clear",
+    "/model",
+    "/history",
+    "/save",
+    "/threads",
+    "/switch",
+    "/new",
+    "/delete",
+    "/rename",
+]
 HISTORY_FILE = Path.home() / ".deep_agent_history"
 
 
@@ -86,6 +100,7 @@ class CommandCompleter(Completer):
             if cmd.startswith(word):
                 yield Completion(cmd, start_position=-len(word))
 
+
 # ═══════════════════════════════════════════
 # UI 组件
 # ═══════════════════════════════════════════
@@ -98,14 +113,17 @@ def build_welcome() -> Panel:
     body.append("◈ Simple Agent TUI ◈\n", style="bold bright_white")
     body.append("\n")
     for cmd, desc in [
-        ("/help   ", "帮助    "),
-        ("/clear  ", "清屏    "),
-        ("/model  ", "切换模型"),
-        ("/save   ", "保存对话"),
-        ("/exit   ", "退出    "),
-        ("/history", "历史\n"),
+        ("/help   ", " 帮助    "),
+        ("/clear  ", " 清屏    "),
+        ("/model  ", " 切换模型"),
+        ("/save   ", " 保存对话"),
+        ("/threads", " 会话列表"),
+        ("/switch ", " 切换会话"),
+        ("/new    ", " 新建会话"),
+        ("/exit   ", " 退出    "),
+        ("/history", " 历史\n"),
     ]:
-        body.append(f"  {cmd}", style="dim")
+        body.append(f"  {cmd:<10}", style="dim")
         body.append(f"{desc}\n")
     return Panel(body, box=ROUNDED, border_style="welcome")
 
@@ -193,9 +211,9 @@ class TUIChat:
             wrap_lines=True,
         )
 
-    def _check_interrupt(self) -> dict | None:
+    async def _check_interrupt(self) -> dict | None:
         """检查是否有挂起的中断。返回 HITLRequest 或 None。"""
-        state = self.agent.assistant_agent.get_state(self.agent.config)
+        state = await self.agent.assistant_agent.aget_state(self.agent.config)
         interrupts = state.interrupts
         if not interrupts:
             return None
@@ -336,7 +354,21 @@ class TUIChat:
 
         elif action == "/history":
             self._cmd_history()
-
+        elif action == "/threads":
+            self._cmd_threads()
+        elif action == "/switch":
+            name = parts[1] if len(parts) > 1 else ""
+            self.agent.switch_thread(name)
+        elif action == "/new":
+            title = parts[1] if len(parts) > 1 else ""
+            self.agent.new_thread(title)
+        elif action == "/delete":
+            name = parts[1] if len(parts) > 1 else ""
+            self.agent.delete_thread(name)
+        elif action == "/rename":
+            sub = parts[1].strip().split(maxsplit=1) if len(parts) > 1 else [""]
+            name, title = (sub[0], sub[1]) if len(sub) > 1 else ("", "")
+            self.agent.rename_thread(name, title)
         else:
             console.print(f"[error]未知命令: {action}，输入 /help 查看帮助[/]\n")
 
@@ -352,6 +384,11 @@ class TUIChat:
             ("/exit", "退出程序"),
             ("/save", "保存对话到 Markdown 文件"),
             ("/history", "显示本轮对话历史摘要"),
+            ("/threads", "列出所有会话"),
+            ("/switch", "切换会话/switch <id>"),
+            ("/new", "新建会话 /new [标题]"),
+            ("/delete", "删除会话 /delete <id>"),
+            ("/rename ", "重命名 /rename <id> <标题>"),
         ]:
             t.append(f"  {cmd:<10}", style="dim")
             t.append(f"{desc}\n", style="info")
@@ -406,23 +443,29 @@ class TUIChat:
             console.print(f"  [dim]{i:>2}.[/] [user]{preview}[/]")
         console.print()
 
+    def _cmd_threads(self):
+        ths = self.agent.thread_mgr.list()
+        for th in ths:
+            console.print(th.id, th.title, th.updated_at)
+
     # ── 流式响应核心 ──
 
     async def _stream_response(self, user_input: str):
         """流式获取 Agent 回复并实时渲染
 
-        - 思考：流式 dim 输出
-        - 答案：打字机流式 → ANSI 回退 → Markdown 原地重渲染，无重复
+        - 思考：流式 dim 输出（保持原样，思考内容不需要 Markdown 渲染）
+        - 答案：Rich Live 渐进式 Markdown 渲染 —— 随 token 到达实时更新，
+          流结束时自动保留最终渲染结果，无 ANSI 回退、无重复输出
+        - 工具调用：统一在答案之后以 Panel 展示
         """
         thinking_text = ""
         answer_text = ""
         tool_calls: list[dict] = []
         thinking_header_printed = False
-        answer_header_printed = False
-        in_thinking = False
-        cursor_saved = False
+        answer_live: Live | None = None
 
         current_input = {"messages": [{"role": "user", "content": user_input}]}
+        self.agent.thread_mgr.touch(self.agent.thread_mgr.current_id)  # 更新时间
 
         try:
             while True:
@@ -437,21 +480,24 @@ class TUIChat:
                     node = metadata.get("langgraph_node")
 
                     if node == "model":
-                        # ── 思考（流式）──
+                        # ── 思考（流式，不参与 Live 渲染）──
                         reasoning = (token.additional_kwargs or {}).get(
                             "reasoning_content", ""
                         ) or ""
                         if reasoning:
+                            # 思考出现时关闭 answer Live（如果有的话）
+                            if answer_live:
+                                answer_live.stop()
+                                answer_live = None
                             if not thinking_header_printed:
                                 console.print()
                                 console.print("▌💭 思考中", style="bold dim cyan")
                                 console.print()
                                 thinking_header_printed = True
-                                in_thinking = True
                             thinking_text += reasoning
                             console.print(reasoning, end="", style="thinking")
 
-                        # ── 答案（打字机流式 + 累积）──
+                        # ── 答案（渐进式 Markdown Live 渲染）──
                         if token.content:
                             content_piece = ""
                             if isinstance(token.content, str):
@@ -463,25 +509,28 @@ class TUIChat:
                                     else:
                                         content_piece += str(block)
                             if content_piece:
-                                if not answer_header_printed:
-                                    if in_thinking:
+                                if answer_live is None:
+                                    # 首个答案 token：打印头 + 启动 Live
+                                    if thinking_header_printed:
                                         console.print()
                                         console.print()
-                                    # 在打印答案头之前保存光标
-                                    console.file.write("\033[s")
-                                    console.file.flush()
-                                    cursor_saved = True
-                                    console.print()
                                     console.print(
                                         "▌🤖 回答", style="bold bright_white"
                                     )
                                     console.print()
-                                    answer_header_printed = True
-                                    in_thinking = False
-                                answer_text += content_piece
-                                console.print(content_piece, end="")
+                                    answer_text = content_piece
+                                    answer_live = Live(
+                                        Markdown(answer_text),
+                                        console=console,
+                                        refresh_per_second=8,
+                                        transient=False,
+                                    )
+                                    answer_live.start()
+                                else:
+                                    answer_text += content_piece
+                                    answer_live.update(Markdown(answer_text))
 
-                        # ── 工具调用 ──
+                        # ── 工具调用元数据（仅收集，等结束后渲染）──
                         tc_chunks = (token.additional_kwargs or {}).get(
                             "tool_calls", []
                         )
@@ -515,6 +564,10 @@ class TUIChat:
                                 existing["args"] += func["arguments"]
 
                     elif node == "tools":
+                        # 工具结果到达：关闭 answer Live，确保面板在干净画布上渲染
+                        if answer_live:
+                            answer_live.stop()
+                            answer_live = None
                         tc_id = getattr(token, "tool_call_id", "")
                         tc_content = getattr(token, "content", "")
                         if tc_id:
@@ -524,7 +577,11 @@ class TUIChat:
                                     break
 
                 # ── 一轮 stream 结束 ──
-                interrupt_data = self._check_interrupt()
+                # 关闭 Live（如果有），让后续渲染在干净画布上
+                if answer_live:
+                    answer_live.stop()
+                    answer_live = None
+                interrupt_data = await self._check_interrupt()
                 if not interrupt_data:
                     break
 
@@ -533,24 +590,13 @@ class TUIChat:
                 answer_text = ""
                 tool_calls = []
                 thinking_header_printed = False
-                answer_header_printed = False
-                in_thinking = False
-                cursor_saved = False
                 current_input = Command(resume={"decisions": decisions})
 
         finally:
-            pass
-
-        # ── ANSI 回退 → Markdown 重渲染 ──
-        if cursor_saved and answer_text:
-            console.file.write("\033[u")  # 回到答案区起点
-            console.file.write("\033[J")  # 清至屏底
-            console.file.flush()
-        if answer_text:
-            console.print()
-            console.print("▌🤖 回答", style="bold bright_white")
-            console.print()
-            console.print(Markdown(answer_text))
+            # 确保 Live 被关闭
+            if answer_live:
+                answer_live.stop()
+                answer_live = None
 
         # ── 工具调用面板 ──
         for tc in tool_calls:

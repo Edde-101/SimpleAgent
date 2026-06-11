@@ -25,7 +25,7 @@ def wrap_tool_with_retry(tool, config=None):
         last_error = None
         for attempt in range(cfg["max_retries"] + 1):  # +1 = 首次执行也算在内
             try:
-                if inspect.iscoroutinefunction()(original):
+                if inspect.iscoroutinefunction(original):
                     return await original(*args, **kwargs)
                 else:
                     return original(*args, **kwargs)

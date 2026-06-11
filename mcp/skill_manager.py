@@ -138,15 +138,14 @@ class SkillManager:
         else:
             self.marketplaces = DEFAULT_MARKETPLACES
 
+        _AGENT_HOME = Path.home() / ".simpleagent"
         self.install_dirs = install_dirs or [
             os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills"
             ),
-            os.path.expanduser("~/.skills"),
+            str(_AGENT_HOME / "skills"),
         ]
-        self.trash_dir = trash_dir or os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".trash"
-        )
+        self.trash_dir = trash_dir or str(_AGENT_HOME / ".trash")
         os.makedirs(self.trash_dir, exist_ok=True)
         for d in self.install_dirs:
             os.makedirs(d, exist_ok=True)
@@ -502,8 +501,12 @@ class SkillManager:
                 return {"type": "git", "url": url}
             return {"type": "http", "url": url}
 
-        # 查市场
+        # 查市场（优先远程，本地的 detail 没有 homepage_url 无法用于下载）
         detail = await self.get_details(skill_name)
+        if detail and not detail.homepage_url and detail.source == "local":
+            # 本地已安装但缺少下载源，跳过本地结果，尝试远程查找
+            detail = await self._fetch_remote_detail(skill_name)
+
         if detail and detail.homepage_url:
             # GitHub repo → 用 git clone
             if "github.com" in detail.homepage_url:

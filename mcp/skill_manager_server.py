@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -7,13 +8,14 @@ from skill_manager import SkillManager
 mcp = FastMCP("Skill Manager Server")
 
 _base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_AGENT_HOME = Path.home() / ".simpleagent"
 
 manager = SkillManager(
     install_dirs=[
         os.path.join(_base_dir, "skills"),
-        os.path.expanduser("~/.skills"),
+        str(_AGENT_HOME / "skills"),
     ],
-    trash_dir=os.path.join(_base_dir, ".trash"),
+    trash_dir=str(_AGENT_HOME / ".trash"),
     marketplaces_yaml=os.path.join(os.path.dirname(__file__), "skill_marketplaces.yaml"),
 )
 

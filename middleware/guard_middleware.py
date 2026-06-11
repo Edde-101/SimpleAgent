@@ -4,7 +4,6 @@ import re
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from deepagents.middleware._utils import append_to_system_message
 from memory.memory_store import vector_store
 
 
@@ -59,22 +58,19 @@ class GuardMiddleware(AgentMiddleware):
         r"\b\d{16,19}\b",  # 银行卡
         r"sk-[a-zA-Z0-9]{20,}",  # API key
     ]
-    PLANNING_PROMPT = """
-        ## 任务规划协议
+    DYNAMIC_MARKER = "\n\n<!-- dynamic_context -->\n"
 
-        判断任务复杂度：
-        - 简单任务（单一查询/计算/工具调用）→ 直接回答
-        - 复杂任务（多工具/多步骤/用户要求规划）→ 先输出执行计划
-
-        计划格式：
-        ## 执行计划
-        1. [步骤] → 工具: [工具名]
-        2. [步骤] → 工具: [工具名]
-        ---
-        是否开始执行？
-
-        等待用户确认后逐步执行。
-        """
+    def _set_dynamic_context(self, state, text: str):
+        """替换 SystemMessage 中的动态上下文（而非追加），避免无限膨胀"""
+        for i in range(len(state["messages"]) - 1, -1, -1):
+            if isinstance(state["messages"][i], SystemMessage):
+                base = state["messages"][i].content
+                if self.DYNAMIC_MARKER in base:
+                    base = base.split(self.DYNAMIC_MARKER)[0]
+                state["messages"][i] = SystemMessage(
+                    content=base + self.DYNAMIC_MARKER + text
+                )
+                break
 
     def _has_pii(self, content):
         """
@@ -117,14 +113,9 @@ class GuardMiddleware(AgentMiddleware):
         preferences = vector_store.get(where={"category": "user_preference"})
         profile_text = build_profile_text(relevant, preferences)
 
-        # 插入规划指令和用户偏好
-        for i in range(len(state["messages"]) - 1, -1, -1):
-            if isinstance(state["messages"][i], SystemMessage):
-                state["messages"][i] = append_to_system_message(
-                    state["messages"][i],
-                    self.PLANNING_PROMPT + "\n" + profile_text,
-                )
-                break
+        # 注入动态上下文（每轮替换，不追加）
+        if profile_text:
+            self._set_dynamic_context(state, profile_text)
         return None
 
     async def aafter_model(self, state, runtime):

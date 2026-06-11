@@ -10,8 +10,9 @@ backend = FilesystemBackend(root_dir=base_dir, virtual_mode=True)
 memory_middleware = MemoryMiddleware(
     backend=backend,
     sources=[
-        "~/.deepagent/AGENTS.md",  # 1. 全局配置（用户级）
-        "./.deepagent/AGENTS.md",  # 2. 项目配置（项目级），覆盖或补充全局配置
+        "~/.deepagent/AGENTS.md",     # 1. 全局配置（遗留用户级）
+        "./.deepagent/AGENTS.md",     # 2. 项目配置（项目级）
+        "/.simpleagent/AGENTS.md",    # 3. Agent 工作目录配置（用户级，新位置）
     ],
 )
 pii_middleware = PIIMiddleware(
